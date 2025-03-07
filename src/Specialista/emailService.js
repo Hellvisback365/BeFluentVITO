@@ -16,6 +16,8 @@ const inviaEmailConferma = (emailGenitore, nomeBambino) => {
         text: `Ciao, \n\nHai appena registrato il bambino ${nomeBambino}. Per favore clicca sul link qui sotto per confermare la registrazione: \n\n[Link di conferma]`
     };
 
+    console.log('Invio email a:', emailGenitore);
+
     transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
             console.log('Errore nell\'invio dell\'email: ', error);
