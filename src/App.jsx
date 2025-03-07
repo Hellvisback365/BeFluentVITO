@@ -40,6 +40,10 @@ import ProfiloBambino from './Bambini/ProfiloBambino';
 import EliminaAccountBambino from './Bambini/EliminaAccountBambino';
 
 
+import Pagamento from './Accesso/Pagamento';             // Importa il componente Pagamento
+import Success from "./Accesso/Success";
+import Cancel from "./Accesso/Cancel";
+
 function App() {
   return (
     <GameTimerProvider>  {/* Avvolgi tutto l'applicativo con il provider */}
@@ -80,6 +84,10 @@ function App() {
           <Route path="/DialogoSpecialista" element={<ParlaConSpecialista />} />
           <Route path="/Profilo/Bambino" element={<ProfiloBambino />} />
           <Route path="/Elimina/Bambino" element={<EliminaAccountBambino />} />
+
+          <Route path="/abbonamenti" element={<Pagamento />} />
+          <Route path="/success" element={<Success />} />
+          <Route path="/cancel" element={<Cancel />} />
         </Routes>
       </AuthProvider>
     </GameTimerProvider>

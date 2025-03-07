@@ -23,6 +23,7 @@ const SpecialistaSchema = new mongoose.Schema({
     sesso: { type: String, required: true },
     telefono: { type: String, required: false },  // Campo opzionale
     //specialistaId: { type: String, required: false, unique: true }
+    pagamentoEffettuato: { type: Boolean, default: false } // Inizialmente non pagato
 },  { timestamps: true }); // Aggiunge createdAt e updatedAt
 
 const Specialista = mongoose.model("Specialista", SpecialistaSchema);

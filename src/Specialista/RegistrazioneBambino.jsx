@@ -42,11 +42,17 @@ const RegistrazioneBambino = () => {
         console.log(bambinoData); // Ora bambinoData è definito
     
         try {
-            // Modifica l'endpoint per inviare la richiesta POST
-            const response = await axios.post('http://localhost:5000/registrazione/bambino', 
-                bambinoData,
-                { headers: { Authorization: `Bearer ${token}` } } // <-- Passa il token JWT
-            );
+            // Aggiungi la registrazione nel database del bambino
+            const response = await axios.post('http://localhost:5000/registrazione/bambino', bambinoData, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+    
+            // Chiamata per inviare l'email di conferma
+            const responseEmail = await axios.post('http://localhost:5000/inviaEmailConferma', {
+                emailGenitore: formData.emailGenitore,
+                nomeBambino: `${formData.nome} ${formData.cognome}`
+            });
+    
             setMessaggio(response.data.message);
             setFormData({
                 nome: '',

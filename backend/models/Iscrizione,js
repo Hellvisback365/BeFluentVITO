@@ -1,0 +1,25 @@
+// models/Iscrizione.js
+import mongoose from 'mongoose';
+
+const iscrizioneSchema = new mongoose.Schema({
+    utenteId: { type: String, required: true }, // String, NON ObjectId (per ora)
+    dataInizio: { type: Date, required: true },
+    dataScadenza: { type: Date, required: true },
+    tipoAbbonamento: { type: String, required: true, enum: ['mensile', 'annuale'] },
+    stato: { type: String, required: true, default: 'attiva', enum: ['attiva', 'scaduta', 'annullata'] },
+    pagamenti: [{
+        pagamentoStripeId: { type: String, required: true },
+        importo: { type: Number, required: true },
+        statoPagamento: { type: String, required: true },
+        dataPagamento: { type: Date, required: true },
+        metodoPagamento: { type: String, required: true },
+        transazioneId: { type: String, required: true }
+    }],
+    palestra_id: { type: String, required:true }, // Assicurati che il tipo sia corretto
+
+}, { timestamps: true });
+
+// Registra il modello *solo se non è già stato registrato*
+const Iscrizione = mongoose.models.Iscrizione || mongoose.model('Iscrizione', iscrizioneSchema);
+
+export default Iscrizione;

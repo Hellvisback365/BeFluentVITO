@@ -8,8 +8,15 @@ import dotenv from 'dotenv';
 import Bambino from './models/Bambino.js'; 
 import mongoose from 'mongoose';
 import validator from 'validator';
+import Report from './models/Report.js';
+import Stripe from 'stripe';
+import Iscrizione from './models/Iscrizione,js';
+import { inviaEmailConferma } from '../src/Specialista/emailService.js';
+import bodyParser from 'body-parser';
 
 dotenv.config(); // Carica variabili d'ambiente
+
+
 
 const authMiddleware = (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];  // Estrae il token dal campo "Authorization"
@@ -41,94 +48,128 @@ const authMiddleware = (req, res, next) => {
 const app = express();
 app.use(json());
 app.use(cors());
-
+app.use(bodyParser.json());
+// Inizializza Stripe con la chiave segreta *dopo* aver caricato dotenv
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Connessione a MongoDB (NUOVO senza errori)
 connect(process.env.MONGO_URI) // Rimuovi le opzioni
   .then(() => console.log("✅ Connesso a MongoDB"))
   .catch(err => console.error(err));
 
-// Connessione a MongoDB
-/*connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-}).then(() => console.log("✅ Connesso a MongoDB"))
-  .catch(err => console.error(err));*/
-
-
-
-  app.post('/registrazione/specialista', async (req, res) => {
-      try {
-          const { nome, cognome, email, username, password, confermaPassword, sesso /*, specialistaId */ } = req.body;
   
-        // 1. CONTROLLO PASSWORD UGUALI
-        if (password !== confermaPassword) {
-            return res.status(400).json({ error: "Le password non coincidono!" });
-        }
+// Endpoint per inviare l'email di conferma
+app.post('/inviaEmailConferma', (req, res) => {
+    const { emailGenitore, nomeBambino } = req.body;
+    inviaEmailConferma(emailGenitore, nomeBambino);
+    res.send({ message: 'Email inviata con successo!' });
+});
 
-        // 2. VALIDAZIONE EMAIL
-        if (!validator.isEmail(email)) {
-            return res.status(400).json({ error: "Email non valida!" });
-        }
 
-        // 3. VALIDAZIONE PASSWORD COMPLESSA - *LE STESSE REGOLE DEL FRONTEND*
-        if (password.length < 8) {
-            return res.status(400).json({ error: "La password deve contenere almeno 8 caratteri." });
-        }
-        if (!/[a-z]/.test(password)) {
-            return res.status(400).json({ error: "La password deve contenere almeno un carattere minuscolo." });
-        }
-        if (!/[A-Z]/.test(password)) {
-            return res.status(400).json({ error: "La password deve contenere almeno un carattere maiuscolo." });
-        }
-        if (!/[0-9]/.test(password)) {
-            return res.status(400).json({ error: "La password deve contenere almeno un numero." });
-        }
-        if (!/[^a-zA-Z0-9]/.test(password)) {
-            return res.status(400).json({ error: "La password deve contenere almeno un carattere speciale." });
-        }
-        // --- FINE VALIDAZIONE PASSWORD ---
+  // 📌 REGISTRAZIONE SPECIALISTA + REDIRECT A STRIPE
+app.post("/registrazione/specialista", async (req, res) => {
+    try {
+      const { nome, cognome, email, username, password, confermaPassword, sesso } = req.body;
   
-        // 4. CONTROLLO EMAIL/USERNAME GIA' ESISTENTI
-        const emailEsistente = await Specialista.findOne({ email });
-        const usernameEsistente = await Specialista.findOne({ username });
-        //const specialistaIdEsistente = await Specialista.findOne({ specialistaId });
-        if (emailEsistente) return res.status(400).json({ error: "Email già registrata!" });
-        if (usernameEsistente) return res.status(400).json({ error: "Username già esistente!" });
-        // if (specialistaIdEsistente) return res.status(400).json({ error: "ID già utilizzato!" });
+      // Controllo password
+      if (password !== confermaPassword) return res.status(400).json({ error: "Le password non coincidono!" });
   
-          // 5. 🔒 CRITTOGRAFA (HASHING) la password prima di salvarla
-          console.log('Dati ricevuti:', req.body);
-          const salt = await genSalt(10); // Genera il salt (10 caratteri casuali)
-          console.log('Salt generato:', salt);
-          const passwordHash = await hash(password, salt); // Genera l'hash della password
-          console.log('Password hashata:', passwordHash);
+      // Validazione email
+      if (!validator.isEmail(email)) return res.status(400).json({ error: "Email non valida!" });
   
-          // 6. CREAZIONE DEL NUOVO SPECIALISTA
-          const nuovoSpecialista = new Specialista({
-              nome,
-              cognome,
-              email: email.toLowerCase(),  // Converte l'email in minuscolo
-              username,
-              password: passwordHash, // Salva la password crittografata
-              sesso,
-              //specialistaId, // Salva l'ID fornito dall'utente
-          });
-
-          await nuovoSpecialista.save();
-          res.status(201).json({ message: "✅ Specialista registrato con successo!" });
-
-      } catch (error) {
-        // Gestione degli errori 
-          if (error.name === 'ValidationError') {
-              // Se c'è un errore di validazione (come email non valida), invia un messaggio specifico
-              res.status(400).json({ error: error.message });
-          } else {
-              res.status(500).json({ error: "Errore durante la registrazione" });
-          }
-          console.error(error);
-      }
+      // Controllo email/username esistenti
+      const emailEsistente = await Specialista.findOne({ email });
+      const usernameEsistente = await Specialista.findOne({ username });
+      if (emailEsistente) return res.status(400).json({ error: "Email già registrata!" });
+      if (usernameEsistente) return res.status(400).json({ error: "Username già in uso!" });
+  
+      // Hash della password
+      const salt = await genSalt(10);
+      const passwordHash = await hash(password, salt);
+  
+      // Creazione dello specialista
+      const nuovoSpecialista = new Specialista({
+        nome,
+        cognome,
+        email: email.toLowerCase(),
+        username,
+        password: passwordHash,
+        sesso,
+      });
+  
+      await nuovoSpecialista.save();
+  
+      // 🔹 CREA SESSIONE DI PAGAMENTO STRIPE
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "payment",
+        success_url: `http://localhost:3000/success?email=${encodeURIComponent(email)}`, // Passa l'email come parametro
+            cancel_url: "http://localhost:3000/cancel", // Modifica anche il cancel_url
+        line_items: [
+          {
+            price_data: {
+              currency: "eur",
+              product_data: { name: "Iscrizione Specialista" },
+              unit_amount: 5000, // 50.00€
+            },
+            quantity: 1,
+          },
+        ],
+      });
+  
+      res.status(201).json({ message: "✅ Specialista registrato con successo!", paymentUrl: session.url });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Errore durante la registrazione" });
+    }
   });
+  
+  // 📌 ENDPOINT STRIPE PER CREARE UNA SESSIONE DI CHECKOUT MANUALE
+  app.post("/create-checkout-session", async (req, res) => {
+    try {
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "payment",
+        success_url: `http://localhost:3000/success?email=${encodeURIComponent(req.body.email)}`, // Passa l'email come parametro
+            cancel_url: "http://localhost:3000/cancel",
+        line_items: [
+          {
+            price_data: {
+              currency: "eur",
+              product_data: { name: "Iscrizione Specialista" },
+              unit_amount: 5000, // 50.00€
+            },
+            quantity: 1,
+          },
+        ],
+      });
+  
+      res.json({ url: session.url });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/pagamento-successo", async (req, res) => {
+    try {
+        const { email } = req.body; // Riceviamo l'email dello specialista
+        const specialista = await Specialista.findOne({ email });
+
+        if (!specialista) {
+            return res.status(404).json({ error: "Specialista non trovato!" });
+        }
+
+        // 🔹 Aggiorniamo il flag nel database
+        specialista.pagamentoEffettuato = true;
+        await specialista.save();
+
+        res.status(200).json({ message: "Pagamento confermato!" });
+    } catch (error) {
+        console.error("Errore aggiornamento pagamento:", error);
+        res.status(500).json({ error: "Errore durante l'aggiornamento del pagamento" });
+    }
+});
+
   
 
 // 📌 API per effettuare il login di uno specialista
@@ -136,24 +177,32 @@ app.post('/login/specialista', async (req, res) => {
     try {
         const { email, password } = req.body;
         const specialista = await Specialista.findOne({ email: email.toLowerCase() });
+
         if (!specialista) {
             return res.status(400).json({ error: "Email non registrata!" });
         }
+
+        // 🔹 BLOCCA L'ACCESSO SE NON HA PAGATO
+        if (!specialista.pagamentoEffettuato) {
+            return res.status(403).json({ error: "Accesso negato: Completa il pagamento per accedere." });
+        }
+
         const passwordValida = await compare(password, specialista.password);
         if (!passwordValida) {
             return res.status(400).json({ error: "Password errata!" });
         }
+
         const token = jwt.sign(
             { id: specialista._id, email: specialista.email, nome: specialista.nome },
             process.env.JWT_SECRET,
             { expiresIn: "1h" }
         );
+
         res.status(200).json({ 
             message: "✅ Login riuscito!", 
             token, 
-            specialistaId: specialista._id,  // Ritorna l'ID dello specialista
-            nome: specialista.nome  // Ritorna il nome dello specialista
-
+            specialistaId: specialista._id,  
+            nome: specialista.nome  
         });
     } catch (error) {
         console.error(error);
@@ -429,6 +478,62 @@ app.delete('/bambino/:id', async (req, res) => {
     }
 });
 
+
+app.post("/api/bambini/:id/reports", authMiddleware, async (req, res) => {
+    try {
+      console.log("BODY: ", req.body);
+      console.log("UTENTE AUTENTICATO: ", req.user);
+  
+      const { testo, oggetto } = req.body;
+      const bambino = await Bambino.findById(req.params.id);
+  
+      if (!bambino) {
+        return res.status(404).json({ error: "Bambino non trovato" });
+      }
+  
+      const nuovoReport = new Report({
+        bambino: bambino._id,
+        oggetto,
+        testo,
+        autore: req.user.id // ID dello specialista
+      });
+  
+      await nuovoReport.save();
+  
+      // Assicurati che `reports` sia un array
+      if (!bambino.reports) {
+        bambino.reports = []; // Inizializza come array vuoto se non esiste
+      }
+      bambino.reports.push(nuovoReport._id);
+      await bambino.save();
+  
+      res.status(201).json(nuovoReport);
+    } catch (error) {
+      console.error("Errore: ", error);
+      res.status(500).json({ error: "Errore durante la creazione del report" });
+    }
+  });
+  
+
+  // Aggiungi la rotta GET per recuperare i report di un bambino
+app.get("/api/bambini/:id/reports", authMiddleware, async (req, res) => {
+    try {
+      const bambinoId = req.params.id;
+      
+      // Trova il bambino per ID
+      const bambino = await Bambino.findById(bambinoId).populate('reports');
+      
+      if (!bambino) {
+        return res.status(404).json({ error: "Bambino non trovato" });
+      }
+      
+      // Restituisci i report del bambino
+      res.status(200).json(bambino.reports);
+    } catch (error) {
+      console.error("Errore: ", error);
+      res.status(500).json({ error: "Errore durante il recupero dei report" });
+    }
+  });
 
 // Avviare il server
 const PORT = process.env.PORT || 5000;
