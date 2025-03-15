@@ -4,7 +4,6 @@ import cors from 'cors';
 import Specialista from './models/Specialista.js'; 
 import { genSalt, hash, compare } from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
 import Bambino from './models/Bambino.js'; 
 import mongoose from 'mongoose';
 import validator from 'validator';
@@ -13,6 +12,13 @@ import Stripe from 'stripe';
 import Iscrizione from './models/Iscrizione,js';
 import { inviaEmailConferma } from '../src/Specialista/emailService.js';
 import bodyParser from 'body-parser';
+import rateLimit from 'express-rate-limit';
+import axios from 'axios';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import path from 'path';
+import * as dotenv from 'dotenv';
 
 dotenv.config(); // Carica variabili d'ambiente
 
@@ -44,11 +50,14 @@ const authMiddleware = (req, res, next) => {
     }
 };
 
-
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const app = express();
 app.use(json());
 app.use(cors());
+app.use(express.json());
 app.use(bodyParser.json());
+
 // Inizializza Stripe con la chiave segreta *dopo* aver caricato dotenv
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -534,6 +543,149 @@ app.get("/api/bambini/:id/reports", authMiddleware, async (req, res) => {
       res.status(500).json({ error: "Errore durante il recupero dei report" });
     }
   });
+  
+  // Configurazione rate limiting (limita richieste per evitare abuso)
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minuti
+    max: 100, // Max 100 richieste ogni 15 minuti
+    message: "Troppe richieste. Riprova più tardi.",
+  });
+  app.use("/api/chatbot", limiter);
+  
+  // 🛑 Lista domande bloccate (GDPR - dati personali)
+  const forbiddenQuestions = [
+    "come ti chiami", "dove abiti", "qual è il tuo numero", "dammi il tuo contatto", "come posso decriptare la password", "come crackare una password", "come ottenere una password wifi"
+  ];
+  const containsForbiddenQuestions = (text) =>
+    forbiddenQuestions.some((question) => text.toLowerCase().includes(question));
+  
+  // Funzione di validazione input utente
+  const validateUserInput = (message) => {
+    if (!message) {
+      return "Il messaggio non può essere vuoto.";
+    }
+    if (message.length > 1000) {
+      return "Il messaggio è troppo lungo.";
+    }
+    return null;
+  };
+  
+  // Inizializza il modello Gemini con impostazioni di sicurezza
+  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,  // Blocca contenuti pericolosi
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,  // Blocca molestie
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,  // Blocca contenuti sessuali espliciti
+      },
+    ],
+  });
+  
+  // Funzione per chiamare Gemini e analizzare il contenuto per problematiche
+  async function analyzeMessageWithGemini(message) {
+    try {
+      // Utilizziamo Gemini per analizzare il testo e rilevare contenuti problematici
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: message }] }]
+      });
+  
+      const responseText = result.response.candidates[0].content.parts[0].text;
+  
+      // Analizzare se il risultato contiene messaggi problematici (come "suicidio", "violenza", ecc.)
+      const harmfulContentFound = checkForHarmfulContent(responseText);
+  
+      if (harmfulContentFound) {
+        return "Il messaggio contiene contenuti problematici.";
+      }
+  
+      return null; // Nessun problema trovato
+    } catch (error) {
+      console.error("Errore durante l'analisi del messaggio:", error);
+      return "Errore nel valutare il messaggio.";
+    }
+  }
+  
+  // Funzione per verificare se il contenuto generato contiene parole o concetti pericolosi
+  function checkForHarmfulContent(responseText) {
+    const harmfulKeywords = [
+      "suicidio", "violenza", "abuso", "odio", "discriminazione", "droghe", "bullying", "sessuale"
+    ];
+  
+    return harmfulKeywords.some(keyword => responseText.toLowerCase().includes(keyword));
+  }
+  
+  // Funzione per chiamare Gemini con retry (evita crash in caso di errore)
+  async function callGeminiWithRetry(prompt, retries = 3, delay = 1000) {
+    try {
+      const generationConfig = {
+        temperature: 0.9,
+        topK: 1,
+        topP: 1,
+        maxOutputTokens: 2048, // Limita la lunghezza della risposta
+      };
+  
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }], // Invio il prompt al modello
+      });
+  
+      return result.response.candidates[0].content.parts[0].text;
+    } catch (error) {
+      if (error.message.includes("429") && retries > 0) {
+        console.warn(`Rate limit superato. Riprovo tra ${delay / 1000} secondi...`);
+        await new Promise((resolve) => setTimeout(resolve, delay)); // Aspetta
+        return callGeminiWithRetry(prompt, retries - 1, delay * 2);
+      }
+      console.error("Errore con Gemini:", error);
+      throw error;
+    }
+  }
+  
+  // Endpoint per il chatbot con protezione GDPR e contenuti sicuri
+  app.post("/api/chatbot", async (req, res) => {
+    try {
+      const { message } = req.body;
+      const validationError = validateUserInput(message);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+  
+      // 🛑 Controllo domande sensibili (GDPR)
+      if (containsForbiddenQuestions(message)) {
+        return res.status(403).json({ error: "Non posso rispondere a questa domanda." });
+      }
+  
+      // ✅ Analizza il messaggio con Gemini per contenuti problematici
+      const analysisError = await analyzeMessageWithGemini(message);
+      if (analysisError) {
+        return res.status(400).json({ error: analysisError });
+      }
+  
+      // ✅ Se il messaggio è sicuro, chiamiamo Gemini per generare la risposta
+      const botResponse = await callGeminiWithRetry(message);
+      res.json({ response: botResponse });
+    } catch (error) {
+      console.error("Errore interno:", error);  // Log degli errori
+      res.status(500).json({ error: "Errore interno del server." });
+    }
+  });
+  
+  // Configurazione Express per Vite (serve per servire il frontend)
+  const staticPath = path.join(__dirname, "..", "frontend", "dist");
+  app.use(express.static(staticPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(staticPath, "index.html"));
+  });
+  
+
 
 // Avviare il server
 const PORT = process.env.PORT || 5000;

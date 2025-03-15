@@ -86,3 +86,13 @@
     font-weight: bold;
   }
   
+  /* Animazione puntini di sospensione */
+.dots {
+  animation: blink 1s steps(5, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
