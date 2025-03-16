@@ -686,6 +686,8 @@ app.get("/api/bambini/:id/reports", authMiddleware, async (req, res) => {
   });
   
 
+  
+
 
 // Avviare il server
 const PORT = process.env.PORT || 5000;

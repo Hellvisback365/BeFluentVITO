@@ -44,6 +44,9 @@ import Pagamento from './Accesso/Pagamento';             // Importa il component
 import Success from "./Accesso/Success";
 import Cancel from "./Accesso/Cancel";
 
+
+
+
 function App() {
   return (
     <GameTimerProvider>  {/* Avvolgi tutto l'applicativo con il provider */}
