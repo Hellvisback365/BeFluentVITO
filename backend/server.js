@@ -10,7 +10,8 @@ import validator from 'validator';
 import Report from './models/Report.js';
 import Stripe from 'stripe';
 import Iscrizione from './models/Iscrizione,js';
-import { inviaEmailConferma } from '../src/Specialista/emailService.js';
+import { inviaEmailConferma } from './emailService.js'; //CORREGGI
+import { registraBambino } from './RegistraBambino.js';
 import bodyParser from 'body-parser';
 import rateLimit from 'express-rate-limit';
 import axios from 'axios';
@@ -25,12 +26,7 @@ dotenv.config(); // Carica variabili d'ambiente
 
 
 const authMiddleware = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1];  // Estrae il token dal campo "Authorization"
-    //Uso dell'operatore "optional chaining" (?.):
-    //Se l'header non esiste, restituisce undefined e non si verifica alcun errore.
-    //eseguito il parsing del token, si ottiene un array con due elementi: "Bearer" e il token vero e proprio.
-    //Con [1] si estrae il token vero e proprio.
-    // (parsing serve a dividere la stringa ottenuta dal bearer ed estrarre il token) 
+    const token = req.headers['authorization']?.split(' ')[1]; 
 
     console.log("Token ricevuto:", token);  // Log per verificare il token
 
@@ -67,13 +63,74 @@ connect(process.env.MONGO_URI) // Rimuovi le opzioni
   .catch(err => console.error(err));
 
   
+// Endpoint per registrare un bambino (protetto da JWT)
+app.post('/registrazione/bambino', authMiddleware, registraBambino );
+  
+
 // Endpoint per inviare l'email di conferma
-app.post('/inviaEmailConferma', (req, res) => {
-    const { emailGenitore, nomeBambino } = req.body;
-    inviaEmailConferma(emailGenitore, nomeBambino);
-    res.send({ message: 'Email inviata con successo!' });
+app.post('/inviaEmailConferma', authMiddleware, async (req, res) => {
+    const { emailGenitore, nomeBambino, specialistaId } = req.body; // Estrai specialistaId
+    const token = req.token;  //il token preso dal middleware
+
+    if (!specialistaId) {
+        return res.status(400).send({ error: 'ID dello specialista mancante.' });
+    }
+      if (!token) {
+        return res.status(400).send({ error: 'Token mancante.' });
+    }
+
+    try {
+        // Genera un token di conferma
+        const confirmationToken = jwt.sign(
+            { emailGenitore, nomeBambino, specialistaId }, // Includi specialistaId nel token
+            process.env.JWT_SECRET_CONFIRM, // Usa una chiave segreta diversa per i token di conferma!
+            { expiresIn: '24h' } // Il token di conferma scade dopo 24 ore
+        );
+       
+        // Invia l'email di conferma
+        await inviaEmailConferma(emailGenitore, nomeBambino, confirmationToken); // Passa il token
+        res.send({ message: 'Email inviata con successo!' });
+
+    } catch (error) {
+        console.error("Errore nell'invio dell'email di conferma:", error);
+        res.status(500).send({ error: 'Errore nell\'invio dell\'email di conferma.' });
+    }
 });
 
+// Endpoint di conferma registrazione
+app.get('/conferma-registrazione/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET_CONFIRM);
+
+        // Trova il bambino basandosi sull'email del genitore e l'ID dello specialista, *NON* sul token
+        const bambino = await Bambino.findOne({
+            emailGenitore: decoded.emailGenitore,
+            specialistaId: decoded.specialistaId // Usa specialistaId per trovare il bambino corretto
+        });
+
+
+        if (!bambino) {
+           
+            return res.status(404).send('<h1>Richiesta non valida o scaduta.</h1>');
+        }
+
+       
+        // Aggiorna lo stato del bambino a confermato
+        bambino.confermato = true;
+        await bambino.save();
+       
+        // Mostra un messaggio di conferma all'utente
+        res.send('<h1>Registrazione confermata con successo!</h1>');
+
+    } catch (error) {
+        console.error("Errore durante la conferma della registrazione:", error);
+         if (error.name === 'TokenExpiredError') {
+            return res.status(401).send('<h1>Il link di conferma è scaduto.</h1>');
+         }
+        res.status(500).send('<h1>Errore durante la conferma della registrazione.</h1>');
+    }
+});
 
   // 📌 REGISTRAZIONE SPECIALISTA + REDIRECT A STRIPE
 app.post("/registrazione/specialista", async (req, res) => {
@@ -354,7 +411,7 @@ app.put('/specialista/update-password', authMiddleware, async (req, res) => {
 
 
 // 📌 API per registrare un bambino
-app.post('/registrazione/bambino', authMiddleware, async (req, res) => {
+/*app.post('/registrazione/bambino', authMiddleware, async (req, res) => {
     try {
         console.log(req.body); // Debug per vedere i dati ricevuti
         const { nome, cognome, dataDiNascita, sesso, emailGenitore, ID } = req.body; // Estrae i dati dal corpo della richiesta
@@ -390,7 +447,7 @@ app.post('/registrazione/bambino', authMiddleware, async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Errore durante la registrazione" }); //500 = Internal Server Error
     }
-});
+});*/
 
 
 // 📌 API per effettuare il login di un bambino

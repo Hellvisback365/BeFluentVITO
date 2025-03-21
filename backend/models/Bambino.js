@@ -9,7 +9,8 @@ const BambinoSchema = new mongoose.Schema({
     ID: { type: String, required: true,  unique: true },
     specialistaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Specialista', required: true },
     reports: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Report' }],
-    isDeleted: { type: Boolean, default: false } // Inizialmente non eliminato
+    isDeleted: { type: Boolean, default: false }, // Inizialmente non eliminato
+    confermato: {type: Boolean, default: false} //aggiungo il booleano
 });
 
 const Bambino = mongoose.model("Bambino", BambinoSchema);
