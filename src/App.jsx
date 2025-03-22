@@ -45,7 +45,7 @@ import Success from "./Accesso/Success";
 import Cancel from "./Accesso/Cancel";
 
 
-
+import ConfermaRegistrazione from './Specialista/ConfermaRegistrazione';
 
 function App() {
   return (
@@ -91,6 +91,8 @@ function App() {
           <Route path="/abbonamenti" element={<Pagamento />} />
           <Route path="/success" element={<Success />} />
           <Route path="/cancel" element={<Cancel />} />
+
+          <Route path="/Conferma/Registrazione/:token" element={<ConfermaRegistrazione />} />
         </Routes>
       </AuthProvider>
     </GameTimerProvider>

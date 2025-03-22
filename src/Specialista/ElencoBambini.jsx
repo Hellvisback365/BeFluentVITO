@@ -30,14 +30,17 @@ function ElencoBambini() {
           }
         });
   
-        setBambini(response.data); // Risultato dell'API viene passato direttamente
-      } catch (error) {
-        console.error("Errore nel recupero dei bambini:", error);
-      }
-    };
-  
-    fetchBambini();
-  }, [token]);
+       // Filtra solo i bambini confermati
+       const bambiniConfermati = response.data.filter(bambino => bambino.confermato);
+
+       setBambini(bambiniConfermati);
+     } catch (error) {
+       console.error("Errore nel recupero dei bambini:", error);
+     }
+   };
+ 
+   fetchBambini();
+ }, [token]);
 
   return (
     <div>

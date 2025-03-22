@@ -44,7 +44,8 @@ const RegistrazioneBambino = () => {
             const responseEmail = await axios.post('http://localhost:5000/inviaEmailConferma', {
                 emailGenitore: formData.emailGenitore,
                 nomeBambino: `${formData.nome} ${formData.cognome}`,
-                specialistaId: auth.specialistaId // Assicurati di includere lo specialistaId
+                specialistaId: auth.specialistaId, // Assicurati di includere lo specialistaId
+                ID: formData.ID // Aggiungi l'ID 
             }, {
                  headers: { Authorization: `Bearer ${token}` }  //invia il token all'endpoint
             });
